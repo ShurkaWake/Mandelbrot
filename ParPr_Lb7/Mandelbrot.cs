@@ -1,4 +1,5 @@
-﻿using System.Drawing;
+﻿using System.Diagnostics;
+using System.Drawing;
 using System.Numerics;
 
 namespace ParPr_Lb7;
@@ -9,7 +10,13 @@ public record Mandelbrot
 
     Complex centre;
     double width;
+    bool isParallel;
+    int outputWidth;
+    int outputHeight;
+
+    Color[] colors;
     Bitmap output;
+    double processingTime;
 
     public Mandelbrot(
         double realCentre, 
@@ -21,7 +28,13 @@ public record Mandelbrot
     {
         centre = new Complex(realCentre, imaginedCentre);
         this.width = width;
+        this.isParallel = isParallel;
+        this.outputWidth = outputWidth;
+        this.outputHeight = outputHeight;
+       
+        colors = new Color[outputWidth * outputHeight];
         output = new Bitmap(outputWidth, outputHeight);
+        FillColors();
         FillOutput();
     }
 
@@ -31,16 +44,67 @@ public record Mandelbrot
     }
 
     public Bitmap Result => output;
+    public double ProcessingTime => processingTime;
+
+    private void FillColors()
+    {
+        long start = Stopwatch.GetTimestamp();
+        if (isParallel)
+        {
+            ParallelFillColors();
+        }
+        else
+        {
+            SequentalFillColors();
+        }
+        long end = Stopwatch.GetTimestamp();
+
+        processingTime = (end - start) / (double)TimeSpan.TicksPerSecond;
+    }
 
     private void FillOutput()
     {
-        for (int i = 0; i < output.Width; i++)
+        Rectangle rect = new Rectangle(0, 0, outputWidth, outputHeight);
+        System.Drawing.Imaging.BitmapData bmpData = output.LockBits(
+            rect, System.Drawing.Imaging.ImageLockMode.ReadWrite, output.PixelFormat);
+
+        IntPtr ptr = bmpData.Scan0;
+        int bytes = Math.Abs(bmpData.Stride) * output.Height;
+        byte[] rgbValues = new byte[bytes];
+        System.Runtime.InteropServices.Marshal.Copy(ptr, rgbValues, 0, bytes);
+
+        for (int i = 0; i < bytes; i += 4) 
         {
-            for (int j = 0; j < output.Height; j++)
+            rgbValues[i] = colors[i / 4].B;
+            rgbValues[i + 1] = colors[i / 4].G;
+            rgbValues[i + 2] = colors[i / 4].R;
+            rgbValues[i + 3] = 255;
+        }
+
+        System.Runtime.InteropServices.Marshal.Copy(rgbValues, 0, ptr, bytes);
+        output.UnlockBits(bmpData);
+    }
+
+    private void SequentalFillColors()
+    {
+        for (int i = 0; i < outputWidth; i++)
+        {
+            for (int j = 0; j < outputHeight; j++)
             {
                 SetPointColor(i, j);
             }
         }
+    }
+
+    private void ParallelFillColors()
+    {
+        Parallel.For(0, outputWidth, (i) =>
+        {
+            for (int j = 0; j < outputHeight; j++)
+            {
+                SetPointColor(i, j);
+            }
+        });
     }
 
     private void SetPointColor(int xPixel, int yPixel)
@@ -58,11 +122,16 @@ public record Mandelbrot
             }
         }
 
-        Color color = ColorFromHSV(
-            Math.Pow((j / (double)MaxIter) * 360, 1.5) % 360,
-            100,
-            (j / (double)MaxIter) * 100);
-        output.SetPixel(xPixel, yPixel, color);
+        Color color = Color.Black;
+        
+        if(j < MaxIter)
+        {
+            color = ColorFromHSV(
+                (Math.Pow((j / (double)MaxIter) * 360, 1.5) % 360),
+                1,
+                1);
+        }
+        colors[yPixel * outputWidth + xPixel] = color;
     }
 
     private Color ColorFromHSV(double hue, double saturation, double value)
@@ -92,8 +161,8 @@ public record Mandelbrot
 
     private Complex PixelToComplex(int x, int y)
     {
-        double xVec = (x / (double) output.Width) - 0.5;
-        double yVect = 0.5 - (y / (double) output.Height);
+        double xVec = (x / (double) outputWidth) - 0.5;
+        double yVect = 0.5 - (y / (double) outputHeight);
 
         double r = centre.Real + xVec * (width / 2.0);
         double i = centre.Imaginary + yVect * (width / 2.0);
