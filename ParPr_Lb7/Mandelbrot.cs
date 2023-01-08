@@ -1,22 +1,22 @@
 ﻿using System.Diagnostics;
 using System.Drawing;
 using System.Numerics;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace ParPr_Lb7;
 
 public record Mandelbrot
 {
-    const int MaxIter = 100;
+    const int MaxIter = 400;
 
     Complex centre;
     double width;
-    bool isParallel;
+    Mode mode;
     int outputWidth;
     int outputHeight;
 
     Color[] colors;
     Bitmap output;
-    double processingTime;
 
     public Mandelbrot(
         double realCentre, 
@@ -24,11 +24,11 @@ public record Mandelbrot
         double width, 
         int outputWidth, 
         int outputHeight,
-        bool isParallel)
+        Mode mode)
     {
         centre = new Complex(realCentre, imaginedCentre);
         this.width = width;
-        this.isParallel = isParallel;
+        this.mode = mode;
         this.outputWidth = outputWidth;
         this.outputHeight = outputHeight;
        
@@ -38,28 +38,27 @@ public record Mandelbrot
         FillOutput();
     }
 
-    public Mandelbrot(int outputWidth, int outputHeight, bool isParallel) 
-        : this(-0.5, 0, 4, outputWidth, outputHeight, isParallel)
+    public Mandelbrot(int outputWidth, int outputHeight, Mode mode) 
+        : this(-0.75, 0, 5, outputWidth, outputHeight, mode)
     {
     }
 
     public Bitmap Result => output;
-    public double ProcessingTime => processingTime;
 
     private void FillColors()
     {
-        long start = Stopwatch.GetTimestamp();
-        if (isParallel)
+        switch(mode)
         {
-            ParallelFillColors();
+            case Mode.Sequental:
+                SequentalFillColors();
+                break;
+            case Mode.ParallelThreads:
+                ParallelThreadsFillColors();
+                break;
+            case Mode.ParallelFor:
+                ParallelForFillColors();
+                break;
         }
-        else
-        {
-            SequentalFillColors();
-        }
-        long end = Stopwatch.GetTimestamp();
-
-        processingTime = (end - start) / (double)TimeSpan.TicksPerSecond;
     }
 
     private void FillOutput()
@@ -96,7 +95,7 @@ public record Mandelbrot
         }
     }
 
-    private void ParallelFillColors()
+    private void ParallelForFillColors()
     {
         Parallel.For(0, outputWidth, (i) =>
         {
@@ -105,6 +104,45 @@ public record Mandelbrot
                 SetPointColor(i, j);
             }
         });
+    }
+
+    private void ParallelThreadsFillColors()
+    {
+        int threadsNum = Environment.ProcessorCount;
+        Thread[] threads = new Thread[threadsNum];
+
+        for (int i = 0; i < threadsNum; i++)
+        {
+            threads[i] = new Thread((obj) =>
+            {
+                DTO dto = (DTO) obj;
+                for (int j = dto.x; j < outputWidth; j += dto.maxParalellism)
+                {
+                    for (int k = 0; k < outputHeight; k++)
+                    {
+                        SetPointColor(j, k);
+                    }
+                }
+            });
+            threads[i].Start(new DTO(i, threadsNum));
+        }
+        
+        foreach (var thread in threads)
+        {
+            thread.Join();
+        }
+    }
+
+    private void ParallelOperation(object data)
+    {
+        DTO dto = (DTO)data;
+        for (int j = dto.x; j < outputWidth; j += dto.maxParalellism)
+        {
+            for (int k = 0; k < outputHeight; k++)
+            {
+                SetPointColor(j, k);
+            }
+        }
     }
 
     private void SetPointColor(int xPixel, int yPixel)
@@ -170,4 +208,11 @@ public record Mandelbrot
     }
 }
 
+record DTO(int x, int maxParalellism);
 
+public enum Mode
+{
+    Sequental = 0,
+    ParallelThreads = 1,
+    ParallelFor = 2,
+}
